@@ -32,13 +32,13 @@ export const register = async (req, res) => {
             [result.insertId, hashedPassword]
         )
 
-        const token = generateAccessToken({ id: result.insertId, email });
+        const token = generateAccessToken({ id: result.insertId });
 
         res.cookie("token", token, {
             httpOnly: true,
             secure: process.env.NODE_ENV === "production",
             sameSite: "lax",
-            maxAge: parseInt(process.env.JWT_EXPIRES_IN),
+            maxAge: 15 * 60 * 1000 // 15 minutes
         });
 
         return res.status(201).json({ 
@@ -56,33 +56,34 @@ export const register = async (req, res) => {
 
 export const login = async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const { email, password } = req.body;   // Get email and password from request body
 
         if (!email || !password) {
         return res.status(400).json({ message: "Email and password are required" });   
     }
-        const [rows] = await pool.execute("SELECT * FROM users WHERE email = ?", [email]);
+        const [rows] = await pool.execute("SELECT * FROM users WHERE email = ?", [email]);    // Query to find user by email
 
-        if (!rows.length) {
+        if (!rows.length) {     // If no user found with the given email
             return res.status(404).json({ message: "User not found" });
         }
 
-        const user = rows[0];
-        const [providers] = await pool.execute(
+        const user = rows[0];  // Get the user records
+        // Verify password
+        const [providers] = await pool.execute(   // Query to get the local auth provider details
             `SELECT p.password_hash FROM user_auth_providers p WHERE p.user_id = ? AND p.provider = 'local'`,
-            [user.id]
+            [user.id]  // user ID
         );
 
-        if (!providers.length || !providers[0].password_hash) {
+        if (!providers.length || !providers[0].password_hash) {    // If no local provider found for the user
             return res.status(401).json({ message: "Invalid credentials" });
         }
-        const isPasswordValid = await bcrypt.compare(password, providers[0].password_hash);
+        const isPasswordValid = await bcrypt.compare(password, providers[0].password_hash);  // Compare provided password with stored hash
 
-        if (!isPasswordValid) {
+        if (!isPasswordValid) {  // If password does not match
             return res.status(401).json({ message: "Invalid credentials" });
         }
 
-        const token = generateAccessToken({ id: user.id, email: user.email });
+        const token = generateAccessToken({ id: user.id });  // Generate JWT token
         const refreshToken = crypto.randomBytes(40).toString('hex');
 
         const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
@@ -90,14 +91,23 @@ export const login = async (req, res) => {
         expiresAt.setDate(expiresAt.getDate() + 7); // 7 days expiry
 
         await pool.execute(
-            `INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (?, ?, ?)`,
+            `INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)`,
             [user.id, tokenHash, expiresAt]
         );
 
+        res.cookie("token", token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: "lax",
+            maxAge: 15 * 60 * 1000 // 15 minutes
+        })
+
         res.cookie("refreshToken", refreshToken, {
             httpOnly: true,
-            secure: true,
+            secure: process.env.NODE_ENV === "production",
             sameSite: "lax",  
+            path: "/auth/refresh-token",   // restrict refresh token cookie to only be sent to this endpoint
+            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
         });
         return res.status(200).json({ message: "Login successful" }, token);
     } catch (error) {

@@ -3,9 +3,12 @@ import cookieParser from "cookie-parser";
 import "dotenv/config";
 import pool from "./config/db.js";
 import userRouter from "./routes/userRoute.js";
+import socialRouter from "./routes/userSocialRoute.js";
+import session from "express-session";
+
 
 const app = express();
-const PORT = process.env.PORT || 4000;
+const PORT = 4000;
 
 // Test DB Connection
 try {
@@ -18,9 +21,22 @@ try {
 // Middleware
 app.use(express.json());
 app.use(cookieParser());
+// Session middleware for OAuth state management
+app.use(session({
+    name: "oauth_session",
+    secret: process.env.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        httpOnly: true,
+        secure: false,
+        sameSite: "lax"
+    }
+}))
 
 // Routes
 app.use("/api/user", userRouter);
+app.use("/auth", socialRouter);
 
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
