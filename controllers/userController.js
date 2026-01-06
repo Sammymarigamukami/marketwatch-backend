@@ -117,3 +117,24 @@ export const login = async (req, res) => {
         });
     }
 }
+
+// logout user: /api/user/logout
+export const logout = async (req, res) => {
+
+    const token = req.cookies.token;
+    console.log("Logging out user with token:", token);
+    try {
+        res.clearCookie("token", {
+            httpOnly: true,
+            secure: false,
+            sameSite: "lax",
+        })
+        console.log("Logged out user, cleared token cookie");
+        return res.status(200).json({ message: "Logout successful" });
+    } catch (error) {
+        return res.status(500).json({ 
+            message: "Error logging out user", 
+            error: error.message 
+        });
+    }
+}

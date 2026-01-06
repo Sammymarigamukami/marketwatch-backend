@@ -24,6 +24,7 @@ export const authGithub = (req, res) => {
 // api: /auth/github/callback
 export const githubCallback = async (req, res) => {
     try {
+
         const { code, state } = req.query;
         const expected = req.session.github_oauth_state;  // Retrieve expected state from session
 
@@ -67,7 +68,7 @@ export const githubCallback = async (req, res) => {
                 }
             })
         ]);
-        if (!emailResponse.ok && !userResponse.ok) {
+        if (!emailResponse.ok || !userResponse.ok) {
             return res.status(500).json({
                 message: "Failed to fetch user email from Github"
             })
@@ -76,7 +77,8 @@ export const githubCallback = async (req, res) => {
         const userData = await userResponse.json();  // Extract user data from response
         const emailData = await emailResponse.json();  // Extract email data from response
 
-        const email = emailData.find((e) => e.primary && e.verified)?.email;
+        const email = emailData.find((e) => e.primary && e.verified)?.email || 
+        emailData.find(e => e.verified)?.email;
         
         if (!email) {
             return res.status(400).json({
@@ -110,14 +112,15 @@ export const githubCallback = async (req, res) => {
                 // Existing user found with the same email proceed 
                 userId = userRows[0].id;
             } else {
-                /**
-                 * firts time ever seeing this person, create a new user
-                 * capture the user id to link with github in the next step
-                 */
-                const [result] = await pool.execute(
-                    "INSERT INTO users (email) VALUES (?)",[email]  // insert new user
+
+                await pool.execute(
+                    "INSERT INTO users (email) VALUES (?)", [email]
                 );
-                userId = result.insertId;  // New user ID
+
+                const [rows] = await pool.execute(
+                    "SELECT id FROM users WHERE email = ?", [email]
+                );
+                userId = rows[0].id;
             }
 
             await pool.execute(
@@ -133,6 +136,8 @@ export const githubCallback = async (req, res) => {
         const expiresAt = new Date();
         expiresAt.setDate(expiresAt.getDate() + 7); // 7 days expiry
 
+        console.log("access token: ", token);
+
         await pool.execute(
             "INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)",[userId, tokenHash, expiresAt]
         );
@@ -140,8 +145,9 @@ export const githubCallback = async (req, res) => {
         // Set access token cookie
         res.cookie("token", token, {
             httpOnly: true,
+            sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
             secure: process.env.NODE_ENV === "production",
-            sameSite: "lax",
+            path: "/",
             maxAge: 15 * 60 * 1000 // 15 minutes
         });
 
@@ -149,7 +155,7 @@ export const githubCallback = async (req, res) => {
         res.cookie("refreshToken", refreshToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === "production",
-            sameSite: "lax",
+            sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
             path: "/auth/refresh-token",   // restrict refresh token cookie to only be sent to this endpoint
             maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
         });
@@ -260,11 +266,14 @@ export const googleCallback = async (req, res) => {
             if (userRows.length) {
                 userId = userRows[0].id;   // Existing user ID
             } else {
-                // Create new user
-                const [result] = await pool.execute(
-                    "INSERT INTO users (email) VALUES (?)",[email]   // insert new user
+
+                await pool.execute(
+                    "INSERT INTO users (email) VALUES (?)", [email]
                 );
-                userId = result.insertId;  // New user ID
+                const [rows] = await pool.execute(
+                    "SELECT id FROM users WHERE email = ?", [email]
+                );
+                userId = rows[0].id;
             }
 
             await pool.execute(
@@ -289,13 +298,14 @@ export const googleCallback = async (req, res) => {
         res.cookie("token", token, {
             httpOnly: true,
             secure: process.env.NODE_ENV === "production",
-            sameSite: "lax",
+            sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
+            path: "/",
             maxAge: 15 * 60 * 1000 // 15 minutes
         })
 
         res.cookie("refreshToken", refreshToken, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
+            secure: false,
             sameSite: "lax",
             path: "/auth/refresh-token",   // restrict refresh token cookie to only be sent to this endpoint
             maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
